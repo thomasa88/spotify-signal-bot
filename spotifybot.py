@@ -2,107 +2,105 @@ import requests
 import requests_oauthlib
 import time
 import datetime
-
-import config
-
-scope = ['playlist-read-private playlist-modify-private']
-
-# oauth = requests_oauthlib.OAuth2Session(config.client_id, redirect_uri=config.redirect_uri,
-#                           scope=scope)
-
-# authorization_url, state = oauth.authorization_url(
-#         'https://accounts.spotify.com/authorize',
-#         # access_type and prompt are Google specific extra
-#         # parameters.
-#         # access_type="offline", prompt="select_account"
-#         )
-
-# print(f'Please go to {authorization_url} and authorize access.')
-
-# authorization_response = input('Enter the full callback URL: ')
-
-# token_url = 'https://accounts.spotify.com/api/token'
-
-# # token = oauth.fetch_token(
-# #         token_url,
-# #         authorization_response=authorization_response,
-# #         # Google specific extra parameter used for client
-# #         # authentication
-# #         #client_secret=config.client_secret)
-# # )
-
-# from requests.auth import HTTPBasicAuth
-
-# auth = HTTPBasicAuth(config.client_id, config.client_secret)
-
-# # Fetch the access token
-
-# token = oauth.fetch_token(token_url, auth=auth,
-#         authorization_response=authorization_response)
-
-
-# r = oauth.get('https://api.spotify.com/v1/playlists/{config.playlist_id}')
-
+import asyncio
+import signalbot
+import logging
+from dataclasses import dataclass
 import spotipy
 from spotipy.oauth2 import SpotifyOAuth
 
-#scope = "user-library-read"
+import config
 
-sp = None
+logging.basicConfig(
+    format='%(asctime)s %(levelname)-8s %(message)s',
+    level=logging.INFO,
+    datefmt='%Y-%m-%d %H:%M:%S')
 
-def connect():
+scope = ['playlist-read-private playlist-modify-private']
+
+spotify = None
+
+def connect_spotify():
     # spotify stores the token in the file '.cache'
-    global sp
-    sp = spotipy.Spotify(auth_manager=SpotifyOAuth(client_id=config.client_id, client_secret=config.client_secret, redirect_uri=config.redirect_uri, scope=scope))
+    global spotify
+    spotify = spotipy.Spotify(auth_manager=SpotifyOAuth(client_id=config.client_id, client_secret=config.client_secret, redirect_uri=config.redirect_uri, scope=scope))
 
-# results = sp.current_user_saved_tracks()
-# for idx, item in enumerate(results['items']):
-#     track = item['track']
-#     print(idx, track['artists'][0]['name'], " – ", track['name'])
-
-#print(sp.playlist(config.playlist_id))
-
-#playlist_add_items(playlist_id, items, position=None)
-# playlist_items(playlist_id, fields=None, limit=100, offset=0, market=None, additional_types=('track', 'episode'))
-#playlist_remove_all_occurrences_of_items(playlist_id, items, snapshot_id=None)
-# fields=None gets all field values
-# fields = None
-# fields = ['added_by.id', 'track(artists(name),name)']
-#tracks = sp.playlist_tracks(config.playlist_id, fields=fields, limit=100, offset=0, market=None, additional_types=('track', ))
-
+# eq and frozen to make it hashable (Alternative: Implement __hash__())
+@dataclass(eq=True, frozen=True)
+class Song:
+    artist: str
+    title: str
+    added_by: str
 
 def get_songs():
     songs = []
     fields = 'items(added_by.id,track(artists.name,name))'
-    items = sp.playlist_items(config.playlist_id, fields=fields, limit=100, offset=0, market=None, additional_types=('track')) # not 'episode'
-    # print(items)
-    # import json
-    # print(json.dumps(items, indent=2))
+    items = spotify.playlist_items(config.playlist_id, fields=fields, limit=100, offset=0, market=None, additional_types=('track')) # not 'episode'
     for item in items['items']:
         track = item['track']
-        artist = ', '.join([a['name'] for a in track['artists']])
-        title = track['name']
-        added_by = item['added_by']['id']
-        print(f'{artist} - {title}, added by {added_by}')
-        songs.append((artist, title, added_by))
+        song = Song(artist=', '.join([a['name'] for a in track['artists']]),
+                    title=track['name'],
+                    added_by=item['added_by']['id'])
+        songs.append(song)
     #next(result) for paged
     return songs
 
+songs = None
 
-connect()
+async def poll_spotify(bot: signalbot.SignalBot):
+    global songs
 
-songs = set(get_songs())
-while True:
-    print(datetime.datetime.now())
+    logging.info(datetime.datetime.now())
     try:
         songs_new = set(get_songs())
     except requests.exceptions.ConnectionError as e:
         # Happens e.g. after computer sleep
-        print('Disconnected', e)
-        connect()
-        
-        
-    print('Added', songs_new - songs)
-    print('Removed', songs - songs_new)
-    # Sleep shorter if there has been a change - someone is editing the list!
-    time.sleep(10)
+        logging.info('Disconnected', e)
+        connect_spotify()
+    logging.info(f'Got song list. {len(songs_new)} songs.')
+
+    if songs is None:
+        # Get the baseline
+        songs = songs_new
+        logging.info(f'Initial song list stored')
+        return
+
+    added = songs_new - songs
+    removed = songs - songs_new
+    logging.info(f'Added {added}')
+    logging.info(f'Removed {removed}')
+    # Collect one big message and send at once
+    msg = []
+    if added:
+        msg.append('\n'.join(f'🤖⚡ In: {s.artist} - {s.title} ({s.added_by})' for s in added))
+    if removed:
+        # The one the song was added by is not the one who removed it,
+        # so skip that field
+        msg.append('\n'.join(f'🤖⚡ Ut: {s.artist} - {s.title}' for s in removed))
+    if msg:
+        await bot.send(config.signal_group_id, '\n'.join(msg))
+    songs = songs_new
+
+class PingCommand(signalbot.Command):
+    async def handle(self, c: signalbot.Context):
+        if c.message.text == "Ping":
+            await c.send("Pong")
+
+async def hello_to_self(bot: signalbot.SignalBot):
+    await bot.send(config.signal_phone_num, '🤖 Spotify Signal bot started!')
+
+def start_signal_bot():
+    bot = signalbot.SignalBot({
+        "signal_service": config.signal_service,
+        "phone_number": config.signal_phone_num
+    })
+    bot.register(PingCommand(), contacts=False, groups=["testgrupp"]) 
+    bot.scheduler.add_job(poll_spotify, 'interval', (bot,), seconds=10)
+    bot.scheduler.add_job(hello_to_self, args=(bot,))
+    bot.start()
+
+def main():
+    connect_spotify()
+    start_signal_bot()
+
+main()
