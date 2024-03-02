@@ -17,7 +17,7 @@ logging.basicConfig(
     level=logging.INFO,
     datefmt='%Y-%m-%d %H:%M:%S')
 
-scope = ['playlist-read-private playlist-modify-private']
+scope = ['playlist-read-private playlist-modify-private'] # Illegal scope:  playlist-modify-public
 
 spotify = None
 songs_cache = None
@@ -29,6 +29,10 @@ def connect_spotify():
     # spotify stores the token in the file '.cache'
     global spotify
     spotify = spotipy.Spotify(auth_manager=SpotifyOAuth(client_id=config.client_id, client_secret=config.client_secret, redirect_uri=config.redirect_uri, scope=scope))
+    
+    # Do a request to force authorization, if needed (will create ".cache" file)
+    #get_songs()
+    logging.warning(f'Spotify user: {spotify.current_user()}')
 
 @dataclass
 class Song:
@@ -66,9 +70,12 @@ async def poll_spotify(bot: signalbot.SignalBot):
     try:
         songs_new = get_songs()
     except requests.exceptions.ConnectionError as e:
-        # Happens e.g. after computer sleep
-        logging.info('Disconnected', e)
-        connect_spotify()
+        # This happened after a computer sleep.
+        # Hopefully this place is the only one where we trigger a connection
+        # error. Other places should be fine, but quite silent to the users
+        # if we don't add error handling.
+        logging.warning(f'Spotify request connect error. We will try again later. {e}')
+        return
     logging.info(f'Got song list. {len(songs_new)} songs.')
 
     if songs_cache is None:
