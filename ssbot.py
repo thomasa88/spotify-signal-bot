@@ -20,6 +20,10 @@ logging.basicConfig(
 scope = ['playlist-read-private playlist-modify-private']
 
 spotify = None
+songs_cache = None
+# To be used when the bots adds a song for another user
+# song_id -> alias
+added_by_override: dict[str, str] = {}
 
 def connect_spotify():
     # spotify stores the token in the file '.cache'
@@ -54,10 +58,9 @@ def get_songs():
     #next(result) for paged
     return set(song_list)
 
-songs = None
 
 async def poll_spotify(bot: signalbot.SignalBot):
-    global songs
+    global songs_cache
 
     logging.info(datetime.datetime.now())
     try:
@@ -68,40 +71,39 @@ async def poll_spotify(bot: signalbot.SignalBot):
         connect_spotify()
     logging.info(f'Got song list. {len(songs_new)} songs.')
 
-    if songs is None:
+    if songs_cache is None:
         # Get the baseline
-        songs = songs_new
+        songs_cache = songs_new
         logging.info(f'Initial song list stored')
         return
 
-    added = songs_new - songs
-    removed = songs - songs_new
+    added = songs_new - songs_cache
+    removed = songs_cache - songs_new
     logging.debug(f'Added {added}')
     logging.debug(f'Removed {removed}')
     # Collect one big message and send at once
     msg = []
-    if added:
-        msg.append('\n'.join(f'⚡ In: {s.artist} - {s.title} ({s.added_by})' for s in added))
+    if added:    
+        # added_by: Override the username if we added it on behalf of another user
+        msg.append('\n'.join(f'⚡ In: {s.artist} - {s.title} ({consume_added_by_override(s)})' for s in added))
     if removed:
         # The one the song was added by is not the one who removed it,
         # so skip that field
         msg.append('\n'.join(f'⚡ Ut: {s.artist} - {s.title}' for s in removed))
     if msg:
         await bot.send(config.signal_group_id, '\n'.join(msg))
-    songs = songs_new
+    songs_cache = songs_new
+
+def consume_added_by_override(song: Song):
+    return added_by_override.pop(song.id, song.added_by)
 
 MASH_PATTERN = re.compile('[^A-Za-z0-9]')
 def remove_song(query):
-    global songs
-    # Doing this will mess with our detection. Just assume no one tries
-    # to remove a song within the poll interval.
-    ## Make sure that we have a fresh list
-    ##songs = get_songs()
-    
+    global songs_cache
     # Simple mashing: Only keep English letters. Should handle hyphens, extra
     # spaces and strange acutes in the input.
     mashed_query = MASH_PATTERN.sub('', query).lower()
-    for song in songs:
+    for song in songs_cache:
         mashed_song = MASH_PATTERN.sub('', song.artist + song.title).lower()
         if mashed_query in mashed_song:
             logging.info(f'Removing {song}')
@@ -167,13 +169,11 @@ class AddCommand(signalbot.Command):
             added_song = add_song(query)
             
             if added_song:
-                # The added_by will be the bot user
-                # Force-update our cache
-                global songs
-                songs = get_songs()
-                # And then inform the group "manually"
-                # The signal name will not be the same as the Spotify id...
-                await c.send(f"⚡ In: {added_song.artist} - {added_song.title} ({c.message.raw_message['envelope']['sourceName']})")
+                # The added_by will be the bot user, so override it
+                # We don't have the Spotify name, so the signal name
+                # (as our current user sees it) will have to do..
+                user_signal_name = c.message.raw_message['envelope']['sourceName']
+                added_by_override[added_song.id] = user_signal_name
                 await c.react('🤖')
             else:
                 await c.react('🤷')
