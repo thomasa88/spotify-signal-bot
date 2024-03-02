@@ -101,8 +101,18 @@ async def poll_spotify(bot: signalbot.SignalBot):
         await bot.send(config.signal_group_id, '\n'.join(msg))
     songs_cache = songs_new
 
+def get_display_name_or_id(user_id: str) -> str:
+    display_name = spotify.user(user_id)['display_name']
+    if display_name:
+        return display_name
+    else:
+        return user_id
+
 def consume_added_by_override(song: Song):
-    return added_by_override.pop(song.id, song.added_by)
+    if override_name := added_by_override.pop(song.id):
+        return override_name
+    else:
+        return get_display_name_or_id(song.added_by)
 
 MASH_PATTERN = re.compile('[^A-Za-z0-9]')
 def remove_song(query):
