@@ -17,7 +17,7 @@ logging.basicConfig(
     level=logging.INFO,
     datefmt='%Y-%m-%d %H:%M:%S')
 
-scope = ['playlist-read-private playlist-modify-private'] # Illegal scope:  playlist-modify-public
+scope = ['playlist-modify-public playlist-read-private playlist-modify-private']
 
 spotify = None
 songs_cache = None
@@ -66,7 +66,7 @@ def get_songs():
 async def poll_spotify(bot: signalbot.SignalBot):
     global songs_cache
 
-    logging.info(datetime.datetime.now())
+    logging.info('Poll Spotify')
     try:
         songs_new = get_songs()
     except requests.exceptions.ConnectionError as e:
@@ -120,6 +120,8 @@ def remove_song(query):
     # Simple mashing: Only keep English letters. Should handle hyphens, extra
     # spaces and strange acutes in the input.
     mashed_query = MASH_PATTERN.sub('', query).lower()
+    if not songs_cache:
+        raise Exception('Empty songs cache')
     for song in songs_cache:
         mashed_song = MASH_PATTERN.sub('', song.artist + song.title).lower()
         if mashed_query in mashed_song:
@@ -156,44 +158,56 @@ class RemoveCommand(signalbot.Command):
 
     async def handle(self, c: signalbot.Context):
         if m := self.OUT_PATTERN.match(c.message.text):
-            query = m.group(1)
-            logging.info(f'Remove "{query}"')
-            MIN_LEN = 6
-            if len(query) < MIN_LEN:
-                # No short strings, to avoid bad matches
-                await c.react('⛔')
-                await c.reply(f'Ange minst {MIN_LEN} tecken!')
+            try:
+                query = m.group(1)
+                logging.info(f'Remove "{query}"')
+                MIN_LEN = 6
+                if len(query) < MIN_LEN:
+                    # No short strings, to avoid bad matches
+                    await c.react('⛔')
+                    await c.reply(f'Ange minst {MIN_LEN} tecken!')
+                    return
+                if not songs_cache:
+                    await poll_spotify(c.bot)
+                ok = remove_song(query)
+                if ok:
+                    await c.react('🤖')
+                else:
+                    await c.react('🤷')
+            except Exception as e:
+                logging.error(e)
+                await c.react('⚠️')
                 return
-            ok = remove_song(query)
-            if ok:
-                await c.react('🤖')
-            else:
-                await c.react('🤷')
 
 class AddCommand(signalbot.Command):
     OUT_PATTERN = re.compile('!in (.+)', re.IGNORECASE)
 
     async def handle(self, c: signalbot.Context):
         if m := self.OUT_PATTERN.match(c.message.text):
-            query = m.group(1)
-            logging.info(f'Add "{query}"')
-            MIN_LEN = 6
-            if len(query) < MIN_LEN:
-                # No short strings, to avoid bad matches
-                await c.react('⛔')
-                await c.reply(f'Ange minst {MIN_LEN} tecken!')
+            try:
+                query = m.group(1)
+                logging.info(f'Add "{query}"')
+                MIN_LEN = 6
+                if len(query) < MIN_LEN:
+                    # No short strings, to avoid bad matches
+                    await c.react('⛔')
+                    await c.reply(f'Ange minst {MIN_LEN} tecken!')
+                    return
+                added_song = add_song(query)
+                
+                if added_song:
+                    # The added_by will be the bot user, so override it
+                    # We don't have the Spotify name, so the signal name
+                    # (as our current user sees it) will have to do..
+                    user_signal_name = c.message.raw_message['envelope']['sourceName']
+                    added_by_override[added_song.id] = user_signal_name
+                    await c.react('🤖')
+                else:
+                    await c.react('🤷')
+            except Exception as e:
+                logging.error(e)
+                await c.react('⚠️')
                 return
-            added_song = add_song(query)
-            
-            if added_song:
-                # The added_by will be the bot user, so override it
-                # We don't have the Spotify name, so the signal name
-                # (as our current user sees it) will have to do..
-                user_signal_name = c.message.raw_message['envelope']['sourceName']
-                added_by_override[added_song.id] = user_signal_name
-                await c.react('🤖')
-            else:
-                await c.react('🤷')
 
 async def hello_to_self(bot: signalbot.SignalBot):
     await bot.send(config.signal_phone_num, '🤖 Spotify Signal bot started!')
