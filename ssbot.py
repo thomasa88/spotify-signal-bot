@@ -109,7 +109,7 @@ def get_display_name_or_id(user_id: str) -> str:
         return user_id
 
 def consume_added_by_override(song: Song):
-    if override_name := added_by_override.pop(song.id):
+    if override_name := added_by_override.pop(song.id, None):
         return override_name
     else:
         return get_display_name_or_id(song.added_by)
