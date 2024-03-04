@@ -92,11 +92,11 @@ async def poll_spotify(bot: signalbot.SignalBot):
     msg = []
     if added:    
         # added_by: Override the username if we added it on behalf of another user
-        msg.append('\n'.join(f'⚡ In: {s.artist} - {s.title} ({consume_added_by_override(s)})' for s in added))
+        msg.append('\n'.join(f'🤖⚡ In: {s.artist} - {s.title} ({consume_added_by_override(s)})' for s in added))
     if removed:
         # The one the song was added by is not the one who removed it,
         # so skip that field
-        msg.append('\n'.join(f'⚡ Ut: {s.artist} - {s.title}' for s in removed))
+        msg.append('\n'.join(f'🤖⚡ Ut: {s.artist} - {s.title}' for s in removed))
     if msg:
         await bot.send(config.signal_group_id, '\n'.join(msg))
     songs_cache = songs_new
