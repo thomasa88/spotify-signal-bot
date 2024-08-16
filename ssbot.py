@@ -102,7 +102,14 @@ async def poll_spotify(bot: signalbot.SignalBot):
     songs_cache = songs_new
 
 def get_display_name_or_id(user_id: str) -> str:
-    display_name = spotify.user(user_id)['display_name']
+    if user_id is None:
+        logging.error('User id is none!')
+        # Break the call, as we don't want the detection algorithm to get the
+        # wrong user, resulting in it thinking that the user "None" has added
+        # songs
+        raise Exception('User id is none!')
+    else:
+        display_name = spotify.user(user_id)['display_name']
     if display_name:
         return display_name
     else:
