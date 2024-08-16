@@ -219,7 +219,7 @@ def run_signal_bot():
     })
     bot.register(RemoveCommand(), contacts=False, groups=[config.signal_group_id])  # should work with string names as well
     bot.register(AddCommand(), contacts=False, groups=[config.signal_group_id])
-    bot.scheduler.add_job(poll_spotify, 'interval', (bot,), seconds=10)
+    bot.scheduler.add_job(poll_spotify, 'interval', (bot,), seconds=120)
     bot.scheduler.add_job(hello_to_self, args=(bot,))
     bot.start()
 
